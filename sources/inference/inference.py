@@ -117,10 +117,10 @@ def detect_video(
 ) -> list:
     process_video_results = []
     configs_weights = [
-        ('co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
+        # ('co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        # ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        # ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        # ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
         ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
     ]
     # Init detectors:
@@ -136,7 +136,8 @@ def detect_video(
         detectors.append(model)
 
 
-    weights = [3, 1, 1, 1, 1]
+    weights = [1] * len(configs_weights)
+    weights[0] = 3
     iou_thr = 0.7
     skip_box_thr = 0.0001
 
@@ -147,7 +148,6 @@ def detect_video(
         cap = cv2.VideoCapture(video_path)
         batch = []
         is_break = False
-
         while True:
             while len(batch) < batch_size:
                 ret, img = cap.read()
@@ -159,11 +159,11 @@ def detect_video(
                 break
             print(f"[INFO] Current frame_id: {frame_id}")
 
-            boxes_list = []
-            scores_list = []
-            labels_list  = []
+            boxes_list = [[]] * len(detectors)
+            scores_list = [[]] * len(detectors)
+            labels_list  = [[]] * len(detectors)
 
-            for model in detectors:
+            for i, model in enumerate(detectors):
                 results = inference_detector(model, batch)
                 data_box = []
                 score_box = []
@@ -189,21 +189,32 @@ def detect_video(
                         bbox = list(map(int, bbox))
                         label = int(label) + 1
                         w,h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                        lines.append(
-                            f"{int(video_id)},{frame_id + idx + 1},{bbox[0]},{bbox[1]},{w},{h},{label},{score}\n"
-                        )
-                        data_box.append([bbox[0]/w, bbox[1]/h, bbox[2]/w, bbox[3]/h])
-                        score_box.append(bbox[4])
-                        label_box.append(bbox[5])
-                boxes_list.append(data_box)
-                scores_list.append(score_box)
-                labels_list.append(label_box)
+                        # lines.append(
+                        #     f"{int(video_id)},{frame_id + idx + 1},{bbox[0]},{bbox[1]},{w},{h},{label},{score}\n"
+                        # )
+                        data_box.append([bbox[0]/width, bbox[1]/height, bbox[2]/width, bbox[3]/height])
+                        score_box.append(score)
+                        label_box.append(label)
+                boxes_list[i].append(data_box)
+                scores_list[i].append(score_box)
+                labels_list[i].append(label_box)
 
-            boxes, scores, labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
+            final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
+            for label, score, bbox in zip(final_labels, final_scores, final_boxes):
+                bbox = list(map(int, bbox))
+                label = int(label) + 1
+                w,h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                lines.append(
+                    f"{int(video_id)},{frame_id},{bbox[0] * width},{bbox[1] * height},{w * width},{h * height},{label},{score}\n"
+                )
+                data_box.append([bbox[0]/width, bbox[1]/height, bbox[2]/width, bbox[3]/height])
+                score_box.append(score)
+                label_box.append(label)
             frame_id += len(batch)
             batch = []
             process_video_results.append(lines)
-        
+            if frame_id == 3:
+                break
     return process_video_results
 
 
