@@ -123,6 +123,9 @@ def detect_video(
         ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
         ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
     ]
+    # Init detectors:
+    detectors = []
+
     for config_name, checkpoint_file in configs_weights:
         config_f_name = config_name.split(".")[0]
         checkpoint_file = os.path.join(checkpoint_files, checkpoint_file)
@@ -130,25 +133,41 @@ def detect_video(
         lines = []
         config_file = os.path.join(config_path, config_name)
         model = init_detector(config_file, checkpoint_file, DatasetEnum.COCO, device='cuda:0')
+        detectors.append(model)
 
-        for video_name in tqdm(os.listdir(test_path)):
-            video_id = video_name.split(".")[0]
-            video_path = os.path.join(test_path, video_name)
-            frame_id = 0
-            cap = cv2.VideoCapture(video_path)
-            batch = []
-            is_break = False
-            while True:
-                while len(batch) < batch_size:
-                    ret, img = cap.read()
-                    if not ret:
-                        is_break = True
-                        break
-                    batch.append(img)
-                if is_break:
+
+    weights = [3, 1, 1, 1, 1]
+    iou_thr = 0.7
+    skip_box_thr = 0.0001
+
+    for video_name in tqdm(os.listdir(test_path)):
+        video_id = video_name.split(".")[0]
+        video_path = os.path.join(test_path, video_name)
+        frame_id = 0
+        cap = cv2.VideoCapture(video_path)
+        batch = []
+        is_break = False
+
+        while True:
+            while len(batch) < batch_size:
+                ret, img = cap.read()
+                if not ret:
+                    is_break = True
                     break
-                print(f"[INFO] Current frame_id: {frame_id}")
+                batch.append(img)
+            if is_break:
+                break
+            print(f"[INFO] Current frame_id: {frame_id}")
+
+            boxes_list = []
+            scores_list = []
+            labels_list  = []
+
+            for model in detectors:
                 results = inference_detector(model, batch)
+                data_box = []
+                score_box = []
+                label_box = []
                 for idx, result in enumerate(results):
                     bbox_result, segm_result = result, None
                     bboxes = np.vstack(bbox_result)
@@ -173,8 +192,16 @@ def detect_video(
                         lines.append(
                             f"{int(video_id)},{frame_id + idx + 1},{bbox[0]},{bbox[1]},{w},{h},{label},{score}\n"
                         )
-                frame_id += len(batch)
-                batch = []
+                        data_box.append([bbox[0]/w, bbox[1]/h, bbox[2]/w, bbox[3]/h])
+                        score_box.append(bbox[4])
+                        label_box.append(bbox[5])
+                boxes_list.append(data_box)
+                scores_list.append(score_box)
+                labels_list.append(label_box)
+
+            boxes, scores, labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
+            frame_id += len(batch)
+            batch = []
             process_video_results.append(lines)
         
     return process_video_results
@@ -214,7 +241,7 @@ def fuse(
                 labels_list.append(label_box)
 
             boxes, scores, labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
-            for i in range(len(boxes)):
+            for i in range(len(boxes)): 
                 results.append([video_id, frame_idx, boxes[i][0] *w , boxes[i][1] * h, (boxes[i][2] - boxes[i][0]) * w
                 , (boxes[i][3] - boxes[i][1]) * h, labels[i], scores[i]])
 
@@ -226,7 +253,7 @@ if __name__ == '__main__':
     args.add_argument('--checkpoint_path', type=str, default='weights')
     args.add_argument('--config_path', type=str, default='configs')
     args.add_argument('--p', type=float, default=0.0001)
-    args.add_argument('--test_path', type=str, default='/data/aicity2024_track5_test/videos')
+    args.add_argument('--test_path', type=str, default='/content/AICITY2024_Track5_modified/data')
     args = args.parse_args()
 
     p = args.p
@@ -238,7 +265,7 @@ if __name__ == '__main__':
     process_video_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
     print("Start Fuse")
-    results = fuse(process_video_results, test_path)
+    #results = fuse(process_video_results, test_path)
 
     print("Start Minority")
     minority_score = minority(p, results)
