@@ -8,6 +8,8 @@ import os
 import argparse
 import json
 
+from google.colab.patches import cv2_imshow  # Display images in Colab
+
 from ensemble_boxes import *
 from tqdm import tqdm
 
@@ -281,6 +283,55 @@ def save_to_json(data, filename="output.json"):
     with open(filename, "w") as f:
         json.dump(data, f, indent=4)  # indent for readability
 
+def visualize_tracking(process_video_results, video_path):
+    """
+    Visualizes object tracking results from process_video_results on a video.
+    
+    Args:
+        process_video_results (list): A list of lists containing detections in format:
+            [video_id, frame_id, x, y, w, h, label, score]
+        video_path (str): Path to the video file.
+    """
+    # Open video
+    cap = cv2.VideoCapture(video_path)
+    width = int(cap.get(3))  # Video width
+    height = int(cap.get(4))  # Video height
+    fps = int(cap.get(cv2.CAP_PROP_FPS))  # Frames per second
+
+    # Generate random colors for each label
+    np.random.seed(42)
+    colors = {i: tuple(np.random.randint(0, 255, 3).tolist()) for i in range(100)}
+
+    # Process each frame
+    for video_data in process_video_results:
+        for bbox_data in video_data:
+            video_id, frame_id, x, y, w, h, label, score = bbox_data
+
+            # Read the corresponding frame
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)  # Move to the frame
+            ret, frame = cap.read()
+            if not ret:
+                continue  # Skip if the frame is not available
+
+            # Convert bbox values to int
+            x, y, w, h = int(x), int(y), int(w), int(h)
+            label = int(label)
+            score = float(score)
+
+            # Draw bounding box
+            color = colors[label] if label in colors else (0, 255, 0)  # Default green
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+
+            # Display label and score
+            text = f"Label: {label}, Score: {score:.2f}"
+            cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+            # Show the frame in Google Colab
+            cv2_imshow(frame)
+
+    # Release video capture
+    cap.release()
+    
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Inference')
     args.add_argument('--batch_size', type=int, default=1)
