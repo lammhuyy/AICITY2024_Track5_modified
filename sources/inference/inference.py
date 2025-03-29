@@ -6,12 +6,15 @@ import cv2
 import numpy as np
 import os
 import argparse
+import json
 
 from ensemble_boxes import *
 from tqdm import tqdm
 
 from utils.filter2 import Filter
 from utils.detection_object import Human, Motor
+
+from ocsort import ocsort
 
 def process_objects(vid, fid, human_list, motor_list):
     filter = Filter(motor_list, human_list)
@@ -117,10 +120,10 @@ def detect_video(
 ) -> list:
     process_video_results = []
     configs_weights = [
-        # ('co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        ('co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
         # ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
         # ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        # ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
+        ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
         ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
     ]
     # Init detectors:
@@ -141,6 +144,7 @@ def detect_video(
     iou_thr = 0.7
     skip_box_thr = 0.0001
 
+    width, height = 1920, 1080
     for video_name in tqdm(os.listdir(test_path)):
         video_id = video_name.split(".")[0]
         video_path = os.path.join(test_path, video_name)
@@ -148,7 +152,12 @@ def detect_video(
         cap = cv2.VideoCapture(video_path)
         batch = []
         is_break = False
+
+        # initialize tracker
+        tracker = ocsort.OCSort(det_thresh=0.30, max_age=10, min_hits=2)
+
         while True:
+        
             while len(batch) < batch_size:
                 ret, img = cap.read()
                 if not ret:
@@ -159,9 +168,9 @@ def detect_video(
                 break
             print(f"[INFO] Current frame_id: {frame_id}")
 
-            boxes_list = [[]] * len(detectors)
-            scores_list = [[]] * len(detectors)
-            labels_list  = [[]] * len(detectors)
+            boxes_list = []
+            scores_list = []
+            labels_list  = []
 
             for i, model in enumerate(detectors):
                 results = inference_detector(model, batch)
@@ -187,33 +196,40 @@ def detect_video(
                     width, height = img.shape[1], img.shape[0]
                     for label, score, bbox in zip(labels, scores, bboxes):
                         bbox = list(map(int, bbox))
-                        label = int(label) + 1
                         w,h = bbox[2] - bbox[0], bbox[3] - bbox[1]
                         # lines.append(
                         #     f"{int(video_id)},{frame_id + idx + 1},{bbox[0]},{bbox[1]},{w},{h},{label},{score}\n"
                         # )
                         data_box.append([bbox[0]/width, bbox[1]/height, bbox[2]/width, bbox[3]/height])
                         score_box.append(score)
-                        label_box.append(label)
-                boxes_list[i].append(data_box)
-                scores_list[i].append(score_box)
-                labels_list[i].append(label_box)
+                        label_box.append(int(label))
+                boxes_list.append(data_box)
+                scores_list.append(score_box)
+                labels_list.append(label_box)
 
+            print(len(boxes_list), boxes_list)
+            print(len(scores_list), scores_list)
+            print(len(labels_list), labels_list)
+            # Fuse the bboxes from different models
             final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
+
+            # Add result to tracker
+            bbox_xyxyc = np.hstack((final_boxes, 
+                     np.c_[final_scores]))
+            tracker = tracker.update(bbox_xyxyc, (width, height), (width, height))
+
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
                 bbox = list(map(int, bbox))
-                label = int(label) + 1
-                w,h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                w, h = x2 - x1, y2 - y1
                 lines.append(
-                    f"{int(video_id)},{frame_id},{bbox[0] * width},{bbox[1] * height},{w * width},{h * height},{label},{score}\n"
+                    f"{int(video_id)},{frame_id},{bbox[0] * width},{bbox[1] * height},{w * width},{h * height},{int(label)},{score}\n"
                 )
-                data_box.append([bbox[0]/width, bbox[1]/height, bbox[2]/width, bbox[3]/height])
-                score_box.append(score)
-                label_box.append(label)
+
             frame_id += len(batch)
             batch = []
             process_video_results.append(lines)
-            if frame_id == 3:
+            if frame_id == 4:
                 break
     return process_video_results
 
@@ -258,13 +274,20 @@ def fuse(
 
     return results
 
+import json
+
+def save_to_json(data, filename="output.json"):
+    """Save a list of lists to a JSON file."""
+    with open(filename, "w") as f:
+        json.dump(data, f, indent=4)  # indent for readability
+
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Inference')
     args.add_argument('--batch_size', type=int, default=1)
     args.add_argument('--checkpoint_path', type=str, default='weights')
     args.add_argument('--config_path', type=str, default='configs')
     args.add_argument('--p', type=float, default=0.0001)
-    args.add_argument('--test_path', type=str, default='/content/AICITY2024_Track5_modified/data')
+    args.add_argument('--test_path', type=str, default='/content/AICITY2024_Track5/data')
     args = args.parse_args()
 
     p = args.p
@@ -275,6 +298,8 @@ if __name__ == '__main__':
     print("Start inference")
     process_video_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
+    save_to_json(process_video_results, "process_video_results.json")
+    
     print("Start Fuse")
     #results = fuse(process_video_results, test_path)
 
