@@ -283,37 +283,56 @@ def save_to_json(data, filename="output.json"):
     with open(filename, "w") as f:
         json.dump(data, f, indent=4)  # indent for readability
 
-def visualize_tracking(process_video_results, video_path):
+def visualize_tracking_from_folder(process_video_results, video_folder):
     """
-    Visualizes object tracking results from process_video_results on a video.
-    
+    Visualizes object tracking results on multiple videos from a folder.
+
     Args:
-        process_video_results (list): A list of lists containing detections in format:
+        process_video_results (list): A list of lists containing detections:
             [video_id, frame_id, x, y, w, h, label, score]
-        video_path (str): Path to the video file.
+        video_folder (str): Path to the folder containing video files.
     """
-    # Open video
-    cap = cv2.VideoCapture(video_path)
-    width = int(cap.get(3))  # Video width
-    height = int(cap.get(4))  # Video height
-    fps = int(cap.get(cv2.CAP_PROP_FPS))  # Frames per second
+    # Get all video file names in the folder
+    video_files = {filename.split('.')[0]: os.path.join(video_folder, filename) 
+                   for filename in os.listdir(video_folder) 
+                   if filename.endswith(('.mp4', '.avi', '.mov'))}
 
     # Generate random colors for each label
     np.random.seed(42)
     colors = {i: tuple(np.random.randint(0, 255, 3).tolist()) for i in range(100)}
 
-    # Process each frame
+    # Process each video's detection list
     for video_data in process_video_results:
-        for bbox_data in video_data:
-            video_id, frame_id, x, y, w, h, label, score = bbox_data
+        if not video_data:
+            continue  # Skip empty lists
 
-            # Read the corresponding frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)  # Move to the frame
+        video_id = str(int(video_data[0][0]))  # Extract video_id as a string
+
+        # Check if video exists in the folder
+        if video_id not in video_files:
+            print(f"⚠️ Warning: Video {video_id} not found in {video_folder}. Skipping...")
+            continue
+
+        video_path = video_files[video_id]
+        print(f"🔍 Processing Video: {video_path}")
+
+        # Open the video
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"❌ Error: Cannot open {video_path}")
+            continue
+
+        # Process each frame in the video
+        for bbox_data in video_data:
+            _, frame_id, x, y, w, h, label, score = bbox_data
+
+            # Set video to the correct frame
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
             ret, frame = cap.read()
             if not ret:
-                continue  # Skip if the frame is not available
+                continue  # Skip if frame is not available
 
-            # Convert bbox values to int
+            # Convert bbox values to integers
             x, y, w, h = int(x), int(y), int(w), int(h)
             label = int(label)
             score = float(score)
@@ -326,12 +345,13 @@ def visualize_tracking(process_video_results, video_path):
             text = f"Label: {label}, Score: {score:.2f}"
             cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-            # Show the frame in Google Colab
+            # Show frame in Google Colab
             cv2_imshow(frame)
 
-    # Release video capture
-    cap.release()
-    
+        # Release the video capture for this video
+        cap.release()
+
+    print("✅ All videos processed!")
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Inference')
     args.add_argument('--batch_size', type=int, default=1)
@@ -350,6 +370,8 @@ if __name__ == '__main__':
     process_video_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
     save_to_json(process_video_results, "process_video_results.json")
+
+    visualize_tracking_from_folder(process_video_results, test_path)
     
     print("Start Fuse")
     #results = fuse(process_video_results, test_path)
