@@ -8,8 +8,6 @@ import os
 import argparse
 import json
 
-from google.colab.patches import cv2_imshow  # Display images in Colab
-
 from ensemble_boxes import *
 from tqdm import tqdm
 
@@ -214,14 +212,14 @@ def detect_video(
             print(len(labels_list), labels_list)
             # Fuse the bboxes from different models
             final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
-
+            print(len(final_boxes), final_boxes)
+            print(len(final_scores), final_scores)
+            print(len(final_labels), final_labels)
             # Add result to tracker
-            bbox_xyxyc = np.hstack((final_boxes, 
-                     np.c_[final_scores]))
-            tracker = tracker.update(bbox_xyxyc, (width, height), (width, height))
+            bbox_xyxyc = np.hstack((final_boxes, np.c_[final_scores]))
+            tracks = tracker.update(bbox_xyxyc, (width, height), (width, height))
 
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
-                bbox = list(map(int, bbox))
                 x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
                 w, h = x2 - x1, y2 - y1
                 lines.append(
@@ -324,7 +322,14 @@ def visualize_tracking_from_folder(process_video_results, video_folder):
 
         # Process each frame in the video
         for bbox_data in video_data:
-            _, frame_id, x, y, w, h, label, score = bbox_data
+            print(bbox_data)
+            print(type(bbox_data))
+            print(len(bbox_data))
+            vid_id, frame_id, x, y, w, h, label, score = bbox_data.strip().split(",")
+            frame_id = int(frame_id)
+            x, y, w, h = map(int, [x, y, w, h])  # Convert to integers
+            score = float(score)  # Convert to float if needed
+
 
             # Set video to the correct frame
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
@@ -346,7 +351,7 @@ def visualize_tracking_from_folder(process_video_results, video_folder):
             cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
             # Show frame in Google Colab
-            cv2_imshow(frame)
+            cv2.imshow(frame)
 
         # Release the video capture for this video
         cap.release()
@@ -371,7 +376,7 @@ if __name__ == '__main__':
 
     save_to_json(process_video_results, "process_video_results.json")
 
-    visualize_tracking_from_folder(process_video_results, test_path)
+    #visualize_tracking_from_folder(process_video_results, test_path)
     
     print("Start Fuse")
     #results = fuse(process_video_results, test_path)
