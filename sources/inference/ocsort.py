@@ -213,7 +213,7 @@ class OCSort(object):
         img_h, img_w = img_info[0], img_info[1]
         scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         bboxes /= scale
-        dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1)
+        dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1) # (N, 5)
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh
         inds_second = np.logical_and(inds_low, inds_high)  # self.det_thresh > score > 0.1, for second matching
