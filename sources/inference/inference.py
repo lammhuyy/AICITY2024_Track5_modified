@@ -14,7 +14,7 @@ from tqdm import tqdm
 from utils.filter2 import Filter
 from utils.detection_object import Human, Motor
 
-from ocsort import ocsort
+import ocsort
 
 def process_objects(vid, fid, human_list, motor_list):
     filter = Filter(motor_list, human_list)
@@ -139,6 +139,7 @@ def detect_video(
         detectors.append(model)
 
 
+    video_tracks = []
     weights = [1] * len(configs_weights)
     weights[0] = 3
     iou_thr = 0.7
@@ -207,17 +208,15 @@ def detect_video(
                 scores_list.append(score_box)
                 labels_list.append(label_box)
 
-            print(len(boxes_list), boxes_list)
-            print(len(scores_list), scores_list)
-            print(len(labels_list), labels_list)
             # Fuse the bboxes from different models
             final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
-            print(len(final_boxes), final_boxes)
-            print(len(final_scores), final_scores)
-            print(len(final_labels), final_labels)
+            full_res = [box + [label, score] for box, label, score in zip(final_boxes, final_labels, final_scores)]
             # Add result to tracker
             bbox_xyxyc = np.hstack((final_boxes, np.c_[final_scores]))
+            print(full_res)
             tracks = tracker.update(bbox_xyxyc, (width, height), (width, height))
+            print(tracks)
+            video_tracks.append(tracks)
 
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
                 x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
@@ -229,9 +228,7 @@ def detect_video(
             frame_id += len(batch)
             batch = []
             process_video_results.append(lines)
-            if frame_id == 4:
-                break
-    return process_video_results
+    return process_video_results, video_tracks
 
 
 def fuse(
@@ -374,7 +371,6 @@ if __name__ == '__main__':
     print("Start inference")
     process_video_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
-    save_to_json(process_video_results, "process_video_results.json")
 
     #visualize_tracking_from_folder(process_video_results, test_path)
     
@@ -382,14 +378,16 @@ if __name__ == '__main__':
     #results = fuse(process_video_results, test_path)
 
     print("Start Minority")
-    minority_score = minority(p, results)
+    minority_score = minority(p, process_video_results)
 
     # Remove boxes with score less than minority_score
     new_results = []
-    for result in results:
+    for result in process_video_results:
         if result[-1] >= minority_score:
             new_results.append(result)
     results = new_results   
+
+    save_to_json(results, "process_video_results.json")
 
     print("Start Virtural Expander")
     results = Virtural_Expander(results)
