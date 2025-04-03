@@ -9,7 +9,7 @@ from association import *
 
 def k_previous_obs(observations, cur_age, k):
     if len(observations) == 0:
-        return [-1, -1, -1, -1, -1]
+        return [-1, -1, -1, -1, -1, -1]
     for i in range(k):
         dt = k - i
         if cur_age - dt in observations:
@@ -96,11 +96,13 @@ class KalmanBoxTracker(object):
         function k_previous_obs. It is ugly and I do not like it. But to support generate observation array in a 
         fast and unified way, which you would see below k_observations = np.array([k_previous_obs(...]]), let's bear it for now.
         """
-        self.last_observation = np.array([-1, -1, -1, -1, -1])  # placeholder
+        self.last_observation = np.array([-1, -1, -1, -1, -1, -1])  # placeholder
         self.observations = dict()
+        self.observations[self.age] = bbox
         self.history_observations = []
         self.velocity = None
         self.delta_t = delta_t
+        
 
     def update(self, bbox):
         """
@@ -113,6 +115,7 @@ class KalmanBoxTracker(object):
                     dt = self.delta_t - i
                     if self.age - dt in self.observations:
                         previous_box = self.observations[self.age-dt]
+                        print("previous_box:", previous_box)
                         break
                 if previous_box is None:
                     previous_box = self.last_observation
@@ -188,6 +191,8 @@ class OCSort(object):
         self.asso_func = ASSO_FUNCS[asso_func]
         self.inertia = inertia
         self.use_byte = use_byte
+        self.all_observations = {}
+
         KalmanBoxTracker.count = 0
 
     def update(self, output_results, img_info, img_size):
@@ -199,13 +204,14 @@ class OCSort(object):
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
         if output_results is None:
-            return np.empty((0, 5))
+            return np.empty((0, 6))
 
         self.frame_count += 1
         # post_process detections
-        if output_results.shape[1] == 5:
+        if output_results.shape[1] == 6:
             scores = output_results[:, 4]
             bboxes = output_results[:, :4]
+            labels = output_results[:, 5]
         else:
             output_results = output_results.cpu().numpy()
             scores = output_results[:, 4] * output_results[:, 5]
@@ -214,6 +220,8 @@ class OCSort(object):
         scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         bboxes /= scale
         dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1) # (N, 5)
+        dets = np.concatenate((dets, np.expand_dims(labels, axis=-1)), axis=1)  # (N, 6)
+
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh
         inds_second = np.logical_and(inds_low, inds_high)  # self.det_thresh > score > 0.1, for second matching
@@ -222,20 +230,18 @@ class OCSort(object):
         dets = dets[remain_inds]
 
         # get predicted locations from existing trackers.
-        trks = np.zeros((len(self.trackers), 5))
+        trks = np.zeros((len(self.trackers), 6))
         to_del = []
         ret = []
         for t, trk in enumerate(trks):
             pos = self.trackers[t].predict()[0]
-            trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]
+            trk[:] = [pos[0], pos[1], pos[2], pos[3], 0, 0]
             if np.any(np.isnan(pos)):
                 to_del.append(t)
         trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
         for t in reversed(to_del):
             self.trackers.pop(t)
             
-        print(self.trackers)
-
         velocities = np.array(
             [trk.velocity if trk.velocity is not None else np.array((0, 0)) for trk in self.trackers])
         last_boxes = np.array([trk.last_observation for trk in self.trackers])
@@ -248,6 +254,7 @@ class OCSort(object):
         matched, unmatched_dets, unmatched_trks = associate(
             dets, trks, self.iou_threshold, velocities, k_observations, self.inertia)
         for m in matched:
+            print("matched:", m)
             self.trackers[m[1]].update(dets[m[0], :])
 
         """
@@ -273,7 +280,6 @@ class OCSort(object):
                     self.trackers[trk_ind].update(dets_second[det_ind, :])
                     to_remove_trk_indices.append(trk_ind)
                 unmatched_trks = np.setdiff1d(unmatched_trks, np.array(to_remove_trk_indices))
-
         if unmatched_dets.shape[0] > 0 and unmatched_trks.shape[0] > 0:
             left_dets = dets[unmatched_dets]
             left_trks = last_boxes[unmatched_trks]
@@ -297,12 +303,12 @@ class OCSort(object):
                     to_remove_trk_indices.append(trk_ind)
                 unmatched_dets = np.setdiff1d(unmatched_dets, np.array(to_remove_det_indices))
                 unmatched_trks = np.setdiff1d(unmatched_trks, np.array(to_remove_trk_indices))
-
         for m in unmatched_trks:
             self.trackers[m].update(None)
 
         # create and initialise new trackers for unmatched detections
         for i in unmatched_dets:
+            print("dets: ", dets[i, :])
             trk = KalmanBoxTracker(dets[i, :], delta_t=self.delta_t)
             self.trackers.append(trk)
         i = len(self.trackers)
@@ -317,25 +323,33 @@ class OCSort(object):
                 d = trk.last_observation[:4]
             if (trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 # +1 as MOT benchmark requires positive
-                ret.append(np.concatenate((d, [trk.id+1])).reshape(1, -1))
+                ret.append(np.concatenate((d, [trk.id])).reshape(1, -1))
             i -= 1
             # remove dead tracklet
             if(trk.time_since_update > self.max_age):
+                self.all_observations[trk.id] = trk.observations
                 self.trackers.pop(i)
+        for trk in self.trackers:
+            print(trk.id, trk.observations)
         if(len(ret) > 0):
             return np.concatenate(ret)
-        return np.empty((0, 5))
+        return np.empty((0, 6))
 
     def update_public(self, dets, cates, scores):
         self.frame_count += 1
 
-        det_scores = np.ones((dets.shape[0], 1))
-        dets = np.concatenate((dets, det_scores), axis=1)
-
+        # det_scores = np.ones((dets.shape[0], 1))
+        # dets = np.concatenate((dets, det_scores), axis=1)
+        dets = np.column_stack((dets, cates, scores))
+        print(dets)
         remain_inds = scores > self.det_thresh
         
         cates = cates[remain_inds]
         dets = dets[remain_inds]
+
+        # print("cates:", cates)
+        # print("dets:", dets)
+        # print("det_scores:", det_scores)
 
         trks = np.zeros((len(self.trackers), 5))
         to_del = []
@@ -348,15 +362,22 @@ class OCSort(object):
                 to_del.append(t)
         trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
         for t in reversed(to_del):
+            track_id = self.trackers[t].id
+            print("id to delete: ", track_id)
+            self.all_observations[track_id] = self.trackers[t].observations
             self.trackers.pop(t)
 
         velocities = np.array([trk.velocity if trk.velocity is not None else np.array((0,0)) for trk in self.trackers])
+        #print("last_obs")
+        for trk in self.trackers:
+            print(trk.last_observation)
+
         last_boxes = np.array([trk.last_observation for trk in self.trackers])
         k_observations = np.array([k_previous_obs(trk.observations, trk.age, self.delta_t) for trk in self.trackers])
 
         matched, unmatched_dets, unmatched_trks = associate_kitti\
               (dets, trks, cates, self.iou_threshold, velocities, k_observations, self.inertia)
-          
+        
         for m in matched:
             self.trackers[m[1]].update(dets[m[0], :])
           
@@ -402,12 +423,16 @@ class OCSort(object):
                 unmatched_trks = np.setdiff1d(unmatched_trks, np.array(to_remove_trk_indices))
 
         for i in unmatched_dets:
+            print(dets[i,:])
             trk = KalmanBoxTracker(dets[i,:])
             trk.cate = cates[i]
+            trk.score = scores[i]
             self.trackers.append(trk)
         i = len(self.trackers)
 
         for trk in reversed(self.trackers):
+            #print(vars(trk))
+            #print("last_obs:", trk.last_observation)
             if trk.last_observation.sum() > 0:
                 d = trk.last_observation[:4]
             else:
@@ -415,13 +440,17 @@ class OCSort(object):
             if (trk.time_since_update < 1):
                 if (self.frame_count <= self.min_hits) or (trk.hit_streak >= self.min_hits):
                     # id+1 as MOT benchmark requires positive
-                    ret.append(np.concatenate((d, [trk.id+1], [trk.cate], [0])).reshape(1,-1)) 
+                     ret.append(np.concatenate((d, [trk.id+1], [trk.cate], [trk.score], [0])).reshape(1,-1)) 
+                    # score = trk.last_observation[4] if trk.last_observation.sum() > 0 else trk.get_state()[0][4]  
+                    # ret.append(np.concatenate((d, [trk.id+1], [trk.cate], [score], [0])).reshape(1,-1))
                 if trk.hit_streak == self.min_hits:
                     # Head Padding (HP): recover the lost steps during initializing the track
                     for prev_i in range(self.min_hits - 1):
                         prev_observation = trk.history_observations[-(prev_i+2)]
-                        ret.append((np.concatenate((prev_observation[:4], [trk.id+1], [trk.cate], 
+                        ret.append((np.concatenate((prev_observation[:4], [trk.id+1], [trk.cate], [trk.score],
                             [-(prev_i+1)]))).reshape(1,-1))
+                        # ret.append((np.concatenate((prev_observation[:4], [trk.id+1], [trk.cate], 
+                        #     [prev_observation[4]], [-(prev_i+1)]))).reshape(1,-1))
             i -= 1 
             if (trk.time_since_update > self.max_age):
                   self.trackers.pop(i)

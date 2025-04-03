@@ -210,14 +210,12 @@ def detect_video(
 
             # Fuse the bboxes from different models
             final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
-            full_res = [box + [label, score] for box, label, score in zip(final_boxes, final_labels, final_scores)]
+            full_res = [list(box) + [label, score] for box, label, score in zip(final_boxes, final_labels, final_scores)]
             # Add result to tracker
-            bbox_xyxyc = np.hstack((final_boxes, np.c_[final_scores]))
-            print(full_res)
+            bbox_xyxyc = np.hstack((final_boxes, np.c_[final_scores], np.c_[final_labels]))
+            print(bbox_xyxyc.shape)
             tracks = tracker.update(bbox_xyxyc, (width, height), (width, height))
             print(tracks)
-            video_tracks.append(tracks)
-
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
                 x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
                 w, h = x2 - x1, y2 - y1
@@ -228,6 +226,7 @@ def detect_video(
             frame_id += len(batch)
             batch = []
             process_video_results.append(lines)
+        video_tracks.append(tracker.all_observations)
     return process_video_results, video_tracks
 
 
