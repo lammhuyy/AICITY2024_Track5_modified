@@ -199,21 +199,24 @@ class OCSort(object):
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
         if output_results is None:
-            return np.empty((0, 5))
+            return np.empty((0, 6))
 
         self.frame_count += 1
         # post_process detections
-        if output_results.shape[1] == 5:
+        if output_results.shape[1] == 6:  # Now handling 6 elements (x1, y1, x2, y2, score, label)
             scores = output_results[:, 4]
             bboxes = output_results[:, :4]
+            labels = output_results[:, 5]  # Extract labels
         else:
             output_results = output_results.cpu().numpy()
             scores = output_results[:, 4] * output_results[:, 5]
-            bboxes = output_results[:, :4]  # x1y1x2y2
+            bboxes = output_results[:, :4]
+            labels = output_results[:, 6]  # Extract labels in this case
+
         img_h, img_w = img_info[0], img_info[1]
         scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         bboxes /= scale
-        dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1) # (N, 5)
+        dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1), np.expand_dims(labels, axis=-1)), axis=1) # (N, 5)
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh
         inds_second = np.logical_and(inds_low, inds_high)  # self.det_thresh > score > 0.1, for second matching
@@ -303,7 +306,7 @@ class OCSort(object):
 
         # create and initialise new trackers for unmatched detections
         for i in unmatched_dets:
-            trk = KalmanBoxTracker(dets[i, :], delta_t=self.delta_t)
+            trk = KalmanBoxTracker(dets[i, :], delta_t=self.delta_t)  # Now dets[i, :] contains the label
             self.trackers.append(trk)
         i = len(self.trackers)
         for trk in reversed(self.trackers):
@@ -317,14 +320,14 @@ class OCSort(object):
                 d = trk.last_observation[:4]
             if (trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 # +1 as MOT benchmark requires positive
-                ret.append(np.concatenate((d, [trk.id+1])).reshape(1, -1))
+                ret.append(np.concatenate((d, [trk.id+1, dets[i, -1]])))
             i -= 1
             # remove dead tracklet
             if(trk.time_since_update > self.max_age):
                 self.trackers.pop(i)
         if(len(ret) > 0):
             return np.concatenate(ret)
-        return np.empty((0, 5))
+        return np.empty((0, 6))
 
     def update_public(self, dets, cates, scores):
         self.frame_count += 1
