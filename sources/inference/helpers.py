@@ -1,6 +1,7 @@
 import association, kalmanfilter, ocsort
 import numpy as np
 import json
+from collections import defaultdict
 
 def convert_ndarray_to_list(obj):
     if isinstance(obj, np.ndarray):
@@ -10,16 +11,6 @@ def convert_ndarray_to_list(obj):
     if isinstance(obj, list):
         return [convert_ndarray_to_list(i) for i in obj]
     return obj
-
-def process_tracking_result(tracking_result):
-    for track_id in tracking_result:
-        detected_result = []
-        for age, bbox in tracking_result[track_id].items():
-            detected_result.append(bbox)
-        tracking_result[track_id] = detected_result
-    return tracking_result
-            
-from collections import defaultdict
 
 def apply_consistent_labels(tracking_result):
     """
@@ -50,6 +41,63 @@ def apply_consistent_labels(tracking_result):
         for box in boxes:
             box[5] = final_label  # Update the label
     return tracking_result
+
+
+def process_tracking_result(tracking_result):
+    tracking_result = convert_ndarray_to_list(tracking_result)
+    for track_id in tracking_result:
+        detected_result = []
+        for age, bbox in tracking_result[track_id].items():
+            detected_result.append(bbox)
+        tracking_result[track_id] = detected_result
+    tracking_result = apply_consistent_labels(tracking_result)
+    return tracking_result
+            
+def convert_tracking_result_to_frames(tracking_result):
+    """
+    Convert tracking_result to a list of frames, each containing detections for different objects.
+    Each detection contains bounding box (x1, y1, x2, y2), label, score, track_id.
+    
+    Args:
+    - tracking_result (dict): A dictionary where the keys are track_ids, and the values are lists of detections.
+    
+    Returns:
+    - List of frames, where each frame is a list of detections.
+    """
+    # Find the max frame_id to know how many frames we have
+    max_frame_id = max([box[6] for boxes in tracking_result.values() for box in boxes])
+
+    # Initialize a list to hold frames
+    frames = [[] for _ in range(max_frame_id)]
+
+    # Organize detections into frames
+    for track_id, boxes in tracking_result.items():
+        for box in boxes:
+            x1, y1, x2, y2, score, label, frame_id = box
+            frame_id = int(frame_id)  # Ensure frame_id is an integer
+            
+            # Create detection dictionary
+            detection = {
+                'track_id': track_id,
+                'bounding_box': [x1, y1, x2, y2],
+                'label': label,
+                'score': score
+            }
+            
+            # Add the detection to the corresponding frame
+            frames[frame_id - 1].append(detection)  # frame_id starts at 1, so use frame_id - 1 as index
+    
+    return frames
+
+# Example: Convert tracking result for multiple videos
+def process_multiple_videos_tracking_results(videos_tracking_results):
+    video_frames = []
+
+    for tracking_result in videos_tracking_results:
+        frames = convert_tracking_result_to_frames(tracking_result)
+        video_frames.append(frames)
+    
+    return video_frames
 
 tracking_result = {}
 det_results = [

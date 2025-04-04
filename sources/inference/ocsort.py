@@ -115,7 +115,7 @@ class KalmanBoxTracker(object):
                     dt = self.delta_t - i
                     if self.age - dt in self.observations:
                         previous_box = self.observations[self.age-dt]
-                        print("previous_box:", previous_box)
+                        #print("previous_box:", previous_box)
                         break
                 if previous_box is None:
                     previous_box = self.last_observation
@@ -257,7 +257,7 @@ class OCSort(object):
         matched, unmatched_dets, unmatched_trks = associate(
             dets, trks, self.iou_threshold, velocities, k_observations, self.inertia)
         for m in matched:
-            print("matched:", m)
+            #print("matched:", m)
             self.trackers[m[1]].update(dets[m[0], :])
 
         """
@@ -312,7 +312,7 @@ class OCSort(object):
 
         # create and initialise new trackers for unmatched detections
         for i in unmatched_dets:
-            print("dets: ", dets[i, :])
+            #print("dets: ", dets[i, :])
             trk = KalmanBoxTracker(dets[i, :], delta_t=self.delta_t)
             self.trackers.append(trk)
         i = len(self.trackers)
@@ -333,8 +333,8 @@ class OCSort(object):
             if(trk.time_since_update > self.max_age):
                 self.all_observations[trk.id] = trk.observations
                 self.trackers.pop(i)
-        for trk in self.trackers:
-            print(trk.id, trk.observations)
+        # for trk in self.trackers:
+        #     print(trk.id, trk.observations)
         if(len(ret) > 0):
             return np.concatenate(ret)
         return np.empty((0, 6))
@@ -345,7 +345,7 @@ class OCSort(object):
         # det_scores = np.ones((dets.shape[0], 1))
         # dets = np.concatenate((dets, det_scores), axis=1)
         dets = np.column_stack((dets, cates, scores))
-        print(dets)
+        #print(dets)
         remain_inds = scores > self.det_thresh
         
         cates = cates[remain_inds]
