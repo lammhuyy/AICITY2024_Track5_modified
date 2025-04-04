@@ -9,7 +9,7 @@ from association import *
 
 def k_previous_obs(observations, cur_age, k):
     if len(observations) == 0:
-        return [-1, -1, -1, -1, -1, -1]
+        return [-1, -1, -1, -1, -1, -1, -1]
     for i in range(k):
         dt = k - i
         if cur_age - dt in observations:
@@ -96,7 +96,7 @@ class KalmanBoxTracker(object):
         function k_previous_obs. It is ugly and I do not like it. But to support generate observation array in a 
         fast and unified way, which you would see below k_observations = np.array([k_previous_obs(...]]), let's bear it for now.
         """
-        self.last_observation = np.array([-1, -1, -1, -1, -1, -1])  # placeholder
+        self.last_observation = np.array([-1, -1, -1, -1, -1, -1, -1])  # placeholder
         self.observations = dict()
         self.observations[self.age] = bbox
         self.history_observations = []
@@ -195,7 +195,7 @@ class OCSort(object):
 
         KalmanBoxTracker.count = 0
 
-    def update(self, output_results, img_info, img_size):
+    def update(self, output_results, img_info, img_size, frame_id):
         """
         Params:
           dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
@@ -219,8 +219,11 @@ class OCSort(object):
         img_h, img_w = img_info[0], img_info[1]
         scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         bboxes /= scale
+
         dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1) # (N, 5)
         dets = np.concatenate((dets, np.expand_dims(labels, axis=-1)), axis=1)  # (N, 6)
+        frame_col = np.full((dets.shape[0], 1), frame_id, dtype=int)
+        dets = np.concatenate((dets, frame_col), axis=1)  # (N, 7)
 
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh
@@ -280,6 +283,7 @@ class OCSort(object):
                     self.trackers[trk_ind].update(dets_second[det_ind, :])
                     to_remove_trk_indices.append(trk_ind)
                 unmatched_trks = np.setdiff1d(unmatched_trks, np.array(to_remove_trk_indices))
+
         if unmatched_dets.shape[0] > 0 and unmatched_trks.shape[0] > 0:
             left_dets = dets[unmatched_dets]
             left_trks = last_boxes[unmatched_trks]

@@ -1,5 +1,55 @@
 import association, kalmanfilter, ocsort
 import numpy as np
+import json
+
+def convert_ndarray_to_list(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: convert_ndarray_to_list(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [convert_ndarray_to_list(i) for i in obj]
+    return obj
+
+def process_tracking_result(tracking_result):
+    for track_id in tracking_result:
+        detected_result = []
+        for age, bbox in tracking_result[track_id].items():
+            detected_result.append(bbox)
+        tracking_result[track_id] = detected_result
+    return tracking_result
+            
+from collections import defaultdict
+
+def apply_consistent_labels(tracking_result):
+    """
+    Modify tracking_result in-place to ensure each object has a consistent label across all frames.
+    Uses confidence-weighted voting to select the most likely label per object.
+    
+    Args:
+        tracking_result (dict): {track_id: list of [x1, y1, x2, y2, conf, label, frame_id]}
+    """
+    consistent_labels = {}
+
+    # Step 1: Determine the consistent label for each track_id
+    for track_id, boxes in tracking_result.items():
+        label_votes = defaultdict(float)
+
+        for box in boxes:
+            conf = box[4]
+            label = int(box[5])
+            label_votes[label] += conf
+
+        # Pick the label with the highest total confidence
+        consistent_label = max(label_votes.items(), key=lambda x: x[1])[0]
+        consistent_labels[track_id] = consistent_label
+
+    # Step 2: Rewrite the original dict using consistent labels
+    for track_id, boxes in tracking_result.items():
+        final_label = consistent_labels[track_id]
+        for box in boxes:
+            box[5] = final_label  # Update the label
+    return tracking_result
 
 tracking_result = {}
 det_results = [
@@ -48,8 +98,8 @@ for i, det_result in enumerate(det_results):
     bbox_xyxyc = np.hstack((final_bboxes, np.c_[final_scores], np.c_[final_labels]))
     # print(bbox_xyxyc.shape)
 
-    print("Input", i)
-    tracks = tracker.update(bbox_xyxyc, (1000, 1000), (1000, 1000))
+    print("Frame", i + 1)
+    tracks = tracker.update(bbox_xyxyc, (1000, 1000), (1000, 1000), i)
     print("tracks:", tracks)
 
     # for track in tracks:
@@ -69,3 +119,13 @@ print("ALL OBSERVATIONS")
 for id, data in tracker.all_observations.items():
     print(id)
     print(data)
+
+with open("tracking_result.json", 'w') as f:
+    serializable_data = convert_ndarray_to_list(tracker.all_observations)
+    processed_tracking_result = process_tracking_result(serializable_data)
+    json.dump(processed_tracking_result, f, indent=4)
+
+with open("cons_tracking_result.json", 'w') as f:
+    cons_tracking_result = apply_consistent_labels(processed_tracking_result)
+    print(processed_tracking_result)
+    json.dump(processed_tracking_result, f, indent = 4)

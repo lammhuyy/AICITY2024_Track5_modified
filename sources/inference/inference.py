@@ -155,7 +155,7 @@ def detect_video(
         is_break = False
 
         # initialize tracker
-        tracker = ocsort.OCSort(det_thresh=0.30, max_age=10, min_hits=2)
+        tracker = ocsort.OCSort(det_thresh=0.30, iou_threshold=0.6, max_age=10, min_hits=2)
 
         while True:
         
@@ -212,10 +212,8 @@ def detect_video(
             final_boxes, final_scores, final_labels = weighted_boxes_fusion(boxes_list, scores_list, labels_list, weights=weights, iou_thr=iou_thr, skip_box_thr=skip_box_thr)
             full_res = [list(box) + [label, score] for box, label, score in zip(final_boxes, final_labels, final_scores)]
             # Add result to tracker
-            bbox_xyxyc = np.hstack((final_boxes, np.c_[final_scores], np.c_[final_labels]))
-            print(bbox_xyxyc.shape)
-            tracks = tracker.update(bbox_xyxyc, (width, height), (width, height))
-            print(tracks)
+            bbox_xyxyclf = np.hstack((final_boxes, np.c_[final_scores], np.c_[final_labels]))
+            tracks = tracker.update(bbox_xyxyclf, (width, height), (width, height), frame_id)
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
                 x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
                 w, h = x2 - x1, y2 - y1
@@ -277,82 +275,6 @@ def save_to_json(data, filename="output.json"):
     with open(filename, "w") as f:
         json.dump(data, f, indent=4)  # indent for readability
 
-def visualize_tracking_from_folder(process_video_results, video_folder):
-    """
-    Visualizes object tracking results on multiple videos from a folder.
-
-    Args:
-        process_video_results (list): A list of lists containing detections:
-            [video_id, frame_id, x, y, w, h, label, score]
-        video_folder (str): Path to the folder containing video files.
-    """
-    # Get all video file names in the folder
-    video_files = {filename.split('.')[0]: os.path.join(video_folder, filename) 
-                   for filename in os.listdir(video_folder) 
-                   if filename.endswith(('.mp4', '.avi', '.mov'))}
-
-    # Generate random colors for each label
-    np.random.seed(42)
-    colors = {i: tuple(np.random.randint(0, 255, 3).tolist()) for i in range(100)}
-
-    # Process each video's detection list
-    for video_data in process_video_results:
-        if not video_data:
-            continue  # Skip empty lists
-
-        video_id = str(int(video_data[0][0]))  # Extract video_id as a string
-
-        # Check if video exists in the folder
-        if video_id not in video_files:
-            print(f"⚠️ Warning: Video {video_id} not found in {video_folder}. Skipping...")
-            continue
-
-        video_path = video_files[video_id]
-        print(f"🔍 Processing Video: {video_path}")
-
-        # Open the video
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            print(f"❌ Error: Cannot open {video_path}")
-            continue
-
-        # Process each frame in the video
-        for bbox_data in video_data:
-            print(bbox_data)
-            print(type(bbox_data))
-            print(len(bbox_data))
-            vid_id, frame_id, x, y, w, h, label, score = bbox_data.strip().split(",")
-            frame_id = int(frame_id)
-            x, y, w, h = map(int, [x, y, w, h])  # Convert to integers
-            score = float(score)  # Convert to float if needed
-
-
-            # Set video to the correct frame
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_id)
-            ret, frame = cap.read()
-            if not ret:
-                continue  # Skip if frame is not available
-
-            # Convert bbox values to integers
-            x, y, w, h = int(x), int(y), int(w), int(h)
-            label = int(label)
-            score = float(score)
-
-            # Draw bounding box
-            color = colors[label] if label in colors else (0, 255, 0)  # Default green
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-
-            # Display label and score
-            text = f"Label: {label}, Score: {score:.2f}"
-            cv2.putText(frame, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-            # Show frame in Google Colab
-            cv2.imshow(frame)
-
-        # Release the video capture for this video
-        cap.release()
-
-    print("✅ All videos processed!")
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Inference')
     args.add_argument('--batch_size', type=int, default=1)
@@ -370,26 +292,23 @@ if __name__ == '__main__':
     print("Start inference")
     process_video_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
-
-    #visualize_tracking_from_folder(process_video_results, test_path)
-    
     print("Start Fuse")
     #results = fuse(process_video_results, test_path)
 
     print("Start Minority")
-    minority_score = minority(p, process_video_results)
+    #inority_score = minority(p, process_video_results)
 
     # Remove boxes with score less than minority_score
-    new_results = []
-    for result in process_video_results:
-        if result[-1] >= minority_score:
-            new_results.append(result)
-    results = new_results   
+    # new_results = []
+    # for result in process_video_results:
+    #     if result[-1] >= minority_score:
+    #         new_results.append(result)
+    # results = new_results   
 
-    save_to_json(results, "process_video_results.json")
+    save_to_json(process_objects, "process_video_results.json")
 
     print("Start Virtural Expander")
-    results = Virtural_Expander(results)
+    results = Virtural_Expander(process_objects)
     
     with open("results.txt", "w") as f:
         f.write(results)
