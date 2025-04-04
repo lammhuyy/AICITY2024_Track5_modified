@@ -123,8 +123,8 @@ def detect_video(
     process_video_results = []
     configs_weights = [
         ('co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        # ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
-        # ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
+        ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_10.pth'),
         ('640x640co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
         ('1280x1280co_dino_5scale_swin_large_16e_o365tococo.py','epoch_15.pth'),
     ]
@@ -141,7 +141,7 @@ def detect_video(
         detectors.append(model)
 
 
-    video_tracks = []
+    videos_results = []
     weights = [1] * len(configs_weights)
     weights[0] = 3
     iou_thr = 0.7
@@ -226,12 +226,16 @@ def detect_video(
             frame_id += len(batch)
             batch = []
             process_video_results.append(lines)
+
+        # Process tracking results
         for obj in tracker.trackers:
             track_id = obj.id
             tracker.all_observations[track_id] = obj.observations
+
+        save_to_json(video_tracks, "output/raw_video_tracks.json")
         video_tracks = helpers.process_tracking_result(tracker.all_observations.copy())
-        video_tracks.append(tracker.all_observations.copy())
-    return process_video_results, video_tracks
+        videos_results.append(video_tracks)
+    return process_video_results, videos_results
 
 
 def fuse(
@@ -295,7 +299,7 @@ if __name__ == '__main__':
     config_path = args.config_path
     checkpoint_files = args.checkpoint_path
     print("Start inference")
-    process_video_results, video_tracks = detect_video(test_path, config_path, checkpoint_files, batch_size)
+    process_video_results, videos_results = detect_video(test_path, config_path, checkpoint_files, batch_size)
 
     print("Start Fuse")
     #results = fuse(process_video_results, test_path)
@@ -310,8 +314,8 @@ if __name__ == '__main__':
     #         new_results.append(result)
     # results = new_results   
 
-    save_to_json(video_tracks, "video_tracks.json")
-    save_to_json(process_video_results, "process_video_results.json")
+    save_to_json(videos_results, "output/videos_results.json")
+    save_to_json(process_video_results, "output/process_video_results.json")
 
     print("Start Virtural Expander")
    #results = Virtural_Expander(process_objects)

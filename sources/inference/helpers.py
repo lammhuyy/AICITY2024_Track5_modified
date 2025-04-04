@@ -2,6 +2,7 @@ import association, kalmanfilter, ocsort
 import numpy as np
 import json
 from collections import defaultdict
+import scipy.special
 
 def convert_ndarray_to_list(obj):
     if isinstance(obj, np.ndarray):
@@ -14,43 +15,134 @@ def convert_ndarray_to_list(obj):
 
 def apply_consistent_labels(tracking_result):
     """
-    Modify tracking_result in-place to ensure each object has a consistent label across all frames.
-    Uses confidence-weighted voting to select the most likely label per object.
-    
+    Modify tracking_result in-place to ensure each object has a consistent label across all frames,
+    using probability-based voting (softmax normalization) to improve robustness.
+
     Args:
         tracking_result (dict): {track_id: list of [x1, y1, x2, y2, conf, label, frame_id]}
     """
     consistent_labels = {}
+    label_probabilities = {}
 
-    # Step 1: Determine the consistent label for each track_id
+    # Step 1: Compute normalized probabilities for each label per track
     for track_id, boxes in tracking_result.items():
         label_votes = defaultdict(float)
+
+        # Collect raw confidence scores for all labels in the track
+        all_confidences = []
+        all_labels = []
 
         for box in boxes:
             conf = box[4]
             label = int(box[5])
-            label_votes[label] += conf
+            all_confidences.append(conf)
+            all_labels.append(label)
 
-        # Pick the label with the highest total confidence
+        # Convert confidences to probabilities using softmax
+        all_confidences = np.array(all_confidences)
+        softmax_probs = scipy.special.softmax(all_confidences)
+
+        # Aggregate probability distributions
+        for label, prob in zip(all_labels, softmax_probs):
+            label_votes[label] += prob
+
+        # Choose the label with the highest average probability
+        consistent_label = max(label_votes.items(), key=lambda x: x[1])[0]
+        consistent_labels[track_id] = consistent_label
+        label_probabilities[track_id] = dict(label_votes)
+
+    # Step 2: Update labels and adjust confidence scores
+    for track_id, boxes in tracking_result.items():
+        final_label = consistent_labels[track_id]
+        total_prob = sum(label_probabilities[track_id].values())
+
+        for box in boxes:
+            original_label = int(box[5])
+            if original_label != final_label:
+                # Penalize confidence based on its original probability
+                original_label_prob = label_probabilities[track_id].get(original_label, 0.0)
+                penalty = original_label_prob / total_prob if total_prob > 0 else 0.5
+                box[4] *= penalty  # Adjust confidence
+            box[5] = final_label  # Update label
+
+    return tracking_result
+
+def apply_adaptive_labels(tracking_result, base_override_threshold=0.7, alpha=0.3, refinement_penalty=0.8):
+    """
+    Modify tracking_result to ensure each object has a consistent label across all frames,
+    with an adaptive strategy based on track confidence and dynamic override threshold.
+
+    Args:
+        tracking_result (dict): {track_id: list of [x1, y1, x2, y2, conf, label, frame_id]}
+        base_override_threshold (float): Base confidence threshold to prevent label changes.
+        alpha (float): Scaling factor to adjust threshold based on track confidence.
+    """
+    consistent_labels = {}
+    track_confidences = {}
+
+    # Step 1: Determine track confidence and majority label
+    for track_id, boxes in tracking_result.items():
+        label_votes = defaultdict(float)
+        total_conf = 0
+        count = 0
+
+        for box in boxes:
+            conf = box[4]
+            label = int(box[5])
+            label_votes[label] += conf  # Confidence-weighted voting
+            total_conf += conf
+            count += 1
+
+        avg_conf = total_conf / count if count > 0 else 0
+        track_confidences[track_id] = avg_conf
         consistent_label = max(label_votes.items(), key=lambda x: x[1])[0]
         consistent_labels[track_id] = consistent_label
 
-    # Step 2: Rewrite the original dict using consistent labels
+    # Step 2: Apply adaptive label refinement
     for track_id, boxes in tracking_result.items():
+        avg_conf = track_confidences[track_id]
         final_label = consistent_labels[track_id]
+
+        # Dynamic override threshold based on track confidence
+        adaptive_threshold = base_override_threshold + alpha * (1 - avg_conf)
+
         for box in boxes:
-            box[5] = final_label  # Update the label
+            original_label = int(box[5])
+            conf = box[4]
+
+            if original_label == final_label:
+                continue  # Already matches
+
+            if conf >= adaptive_threshold:
+                continue  # Trust the confident prediction
+
+            # Update label and reduce confidence
+            box[5] = final_label
+            box[4] *= refinement_penalty # Penalize changed label confidence
+
     return tracking_result
 
 
-def process_tracking_result(tracking_result):
+
+def process_tracking_result(tracking_result, consistent_labeling=True, adaptive_labeling=False):
+    if adaptive_labeling and cons_tracking_result:
+        print("Confusing between voting strategies")
+        return
+
     tracking_result = convert_ndarray_to_list(tracking_result)
     for track_id in tracking_result:
         detected_result = []
         for age, bbox in tracking_result[track_id].items():
             detected_result.append(bbox)
         tracking_result[track_id] = detected_result
-    tracking_result = apply_consistent_labels(tracking_result)
+
+    if consistent_labeling:
+        tracking_result = apply_consistent_labels(tracking_result)
+    if adaptive_labeling:
+        tracking_result = apply_adaptive_labels(tracking_result)
+    
+    # Convert to frame-based detection format
+    tracking_result = convert_tracking_result_to_frames(tracking_result)
     return tracking_result
             
 def convert_tracking_result_to_frames(tracking_result):
