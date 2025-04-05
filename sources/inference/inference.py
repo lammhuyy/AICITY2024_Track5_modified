@@ -216,6 +216,7 @@ def detect_video(
             # Add result to tracker
             bbox_xyxyclf = np.hstack((final_boxes, np.c_[final_scores], np.c_[final_labels]))
             tracks = tracker.update(bbox_xyxyclf, (width, height), (width, height), frame_id)
+            
             for label, score, bbox in zip(final_labels, final_scores, final_boxes):
                 x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
                 w, h = x2 - x1, y2 - y1
